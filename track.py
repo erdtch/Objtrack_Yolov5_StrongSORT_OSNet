@@ -52,6 +52,11 @@ from strong_sort.strong_sort import StrongSORT
 
 from speed_estimation.estiamtor import SpeedEstimator
 
+import json
+import pandas as pd
+
+from datetime import datetime
+
 # remove duplicated stream handler to avoid duplicated logging
 logging.getLogger().removeHandler(logging.getLogger().handlers[0])
 
@@ -87,10 +92,9 @@ def run(
     half=False,  # use FP16 half-precision inference
     dnn=False,  # use OpenCV DNN for ONNX inference
     poly_file=ROOT / "data/examples/rectangle_area.txt",  # polygon file
-    save_df=False,  # save dataframe
+    save_json=ROOT,  # save dataframe
+    distance=10,  # distance between two areas.
 ):
-    speed_estimator = SpeedEstimator(poly_file)
-
     source = str(source)
     save_img = not nosave and not source.endswith(".txt")  # save inference images
     is_file = Path(source).suffix[1:] in (VID_FORMATS)
@@ -169,7 +173,22 @@ def run(
     model.warmup(imgsz=(1 if pt else nr_sources, 3, *imgsz))  # warmup
     dt, seen = [0.0, 0.0, 0.0, 0.0], 0
     curr_frames, prev_frames = [None] * nr_sources, [None] * nr_sources
+    calc_time_stamp = 0.0
     for frame_idx, (path, im, im0s, vid_cap, s) in enumerate(dataset):
+        # print("FRAME", frame_idx)
+        if vid_cap and frame_idx == 0:  # video
+            fps = vid_cap.get(cv2.CAP_PROP_FPS)
+            w = int(vid_cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            h = int(vid_cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            calc_time_stamp = calc_time_stamp + 1000 / fps
+            speed_estimator = SpeedEstimator(poly_file, imgsz[0], w, h)
+            # print("KUY")
+        elif frame_idx == 0:  # stream
+            fps, w, h = 30, im0.shape[1], im0.shape[0]
+
+        # count += 1
+        # if count % 3 == 0:
+        # continue
         t1 = time_sync()
         im = torch.from_numpy(im).to(device)
         im = im.half() if half else im.float()  # uint8 to fp16/32
@@ -199,6 +218,7 @@ def run(
             max_det=opt.max_det,
         )
         dt[2] += time_sync() - t3
+        curr_time = float(frame_idx) / fps
 
         # Process detections
         for i, det in enumerate(pred):  # detections per image
@@ -264,54 +284,74 @@ def run(
 
                         c = int(cls)  # integer class
                         id = int(id)  # integer id
-                        label = f"{id} {names[c]} {conf:.2f}"
-
-                        x_center, y_center = int(bboxes[0]), int(bboxes[1])
+                        label = f"{id} "
+                        # print(bboxes)
+                        x_center = int((bboxes[0] + bboxes[2]) / 2)
+                        y_center = int((bboxes[1] + bboxes[3]) / 2)
+                        # y_center = int(bboxes[3] / 2)
+                        # label += f" {x_center}-{y_center}"
+                        # print("id", id, end=" ")
                         result = speed_estimator.obj_inside_poly(x_center, y_center)
+                        # print(bboxes)
+                        # print("enter:", speed_estimator.vehicle_entering)
+                        # print("leaving:", speed_estimator.vehicle_leaving)
 
-                        if result > 0:
-                            annotator.box_label(bboxes, label, color=colors(c, True))
+                        if result >= 0:
                             if id not in speed_estimator.vehicle_entering:
                                 speed_estimator.vehicle_entering[id] = (
                                     x_center,
                                     y_center,
                                     result,
-                                    time.time(),
+                                    curr_time,
                                 )
 
                             elif id not in speed_estimator.vehicle_leaving:
+                                # print("YESSSSS")
                                 x_center_start = speed_estimator.vehicle_entering[id][0]
                                 y_center_start = speed_estimator.vehicle_entering[id][1]
                                 area_id_start = speed_estimator.vehicle_entering[id][2]
                                 time_start = speed_estimator.vehicle_entering[id][3]
 
                                 if area_id_start != result:
-                                    # distance = (x_center_start - x_center) ** 2 + (
-                                    # y_center_start - y_center
-                                    # ) ** 2
-                                    # distance = distance ** 1 / 2
-                                    distance = 25.6  # convert to m
-                                    time_used = time.time() - time_start
-                                    velocity = distance / time_used
+                                    """distance = (x_center_start - x_center) ** 2 + (
+                                        y_center_start - y_center
+                                    ) ** 2
+                                    distance = distance ** 1 / 2"""
+                                    # print(distance)
+                                    # distance = 32
+                                    # distance = 25.6  # convert to m
+                                    time_used = curr_time - time_start
+                                    # print(time_used)
+                                    velocity = (distance / time_used) * 3.6
 
-                                    speed_estimator.vehicle_leaving[id] = (
-                                        distance,
-                                        time_used,
-                                        result,
-                                        velocity,
-                                    )
-                                    label += f" {velocity:.2f} m/s"
-                                    annotator.box_label(
-                                        bboxes, label, color=colors(c, True)
-                                    )
+                                    speed_estimator.vehicle_leaving[id] = {
+                                        "frame_idx": datetime.now().strftime(
+                                            "%d/%m/%Y %H:%M:%S"
+                                        ),
+                                        "id": id,
+                                        "velocity": velocity,
+                                        "distance": distance,
+                                        "time_used": time_used,
+                                        "area_id": result,
+                                    }
+                                    label += f" {velocity:.2f} km/hr"
+                                    # print(label)
+
+                            elif id in speed_estimator.vehicle_leaving:
+                                velocity = speed_estimator.vehicle_leaving[id][
+                                    "velocity"
+                                ]
+                                label += f" {velocity:.2f} km/hr"
 
                         elif id in speed_estimator.vehicle_leaving:
-                            velocity = speed_estimator.vehicle_leaving[id][3]
-                            label += f" {velocity:.2f} m/s"
-                            annotator.box_label(bboxes, label, color=colors(c, True))
+                            velocity = speed_estimator.vehicle_leaving[id]["velocity"]
+                            label += f" {velocity:.2f} km/hr"
+                            # print(label)
 
-                        elif id in speed_estimator.vehicle_entering:
-                            annotator.box_label(bboxes, label, color=colors(c, True))
+                        if id in speed_estimator.vehicle_entering:
+                            annotator.draw_circle(x_center, y_center)
+
+                        annotator.box_label(bboxes, label, color=colors(c, True))
 
                         if save_txt:
                             # to MOT format
@@ -364,8 +404,10 @@ def run(
                 strongsort_list[i].increment_ages()
                 LOGGER.info("No detections")
 
+            annotator.draw_info(len(outputs[i]), fps=1 / ((t3 - t2) + (t5 - t4)))
             # Stream results
             im0 = annotator.result()
+
             if show_vid:
                 cv2.imshow(str(p), im0)
                 cv2.waitKey(1)  # 1 millisecond
@@ -376,12 +418,7 @@ def run(
                     vid_path[i] = save_path
                     if isinstance(vid_writer[i], cv2.VideoWriter):
                         vid_writer[i].release()  # release previous video writer
-                    if vid_cap:  # video
-                        fps = vid_cap.get(cv2.CAP_PROP_FPS)
-                        w = int(vid_cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-                        h = int(vid_cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                    else:  # stream
-                        fps, w, h = 30, im0.shape[1], im0.shape[0]
+
                     save_path = str(
                         Path(save_path).with_suffix(".mp4")
                     )  # force *.mp4 suffix on results videos
@@ -391,6 +428,12 @@ def run(
                 vid_writer[i].write(im0)
 
             prev_frames[i] = curr_frames[i]
+    if save_json:
+        # pd.DataFrame(speed_estimator.vehicle_leaving).to_csv(
+        # save_dir / "data.csv", index=False
+        # )
+        with open(save_dir / "data.json", "w") as f:
+            json.dump(speed_estimator.vehicle_leaving, f)
 
     # Print results
     t = tuple(x / seen * 1e3 for x in dt)  # speeds per image
@@ -510,9 +553,12 @@ def parse_opt():
         help="Path to the polygon file",
     )
     parser.add_argument(
-        "--save-df",
+        "--save-json",
         action="store_true",
         help="Save the speed and car result as dataframe",
+    )
+    parser.add_argument(
+        "--distance", type=int, help="Distance between the two areas (meters)",
     )
 
     opt = parser.parse_args()
