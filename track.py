@@ -181,8 +181,7 @@ def run(
             w = int(vid_cap.get(cv2.CAP_PROP_FRAME_WIDTH))
             h = int(vid_cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
             calc_time_stamp = calc_time_stamp + 1000 / fps
-            speed_estimator = SpeedEstimator(poly_file, imgsz[0], w, h)
-            # print("KUY")
+            speed_estimator = SpeedEstimator(poly_file)
         elif frame_idx == 0:  # stream
             fps, w, h = 30, im0.shape[1], im0.shape[0]
 
@@ -287,8 +286,8 @@ def run(
                         label = f"{id} "
                         # print(bboxes)
                         x_center = int((bboxes[0] + bboxes[2]) / 2)
-                        y_center = int((bboxes[1] + bboxes[3]) / 2)
-                        # y_center = int(bboxes[3] / 2)
+                        # y_center = int((bboxes[1] + bboxes[3]) / 2)
+                        y_center = int(bboxes[3])
                         # label += f" {x_center}-{y_center}"
                         # print("id", id, end=" ")
                         result = speed_estimator.obj_inside_poly(x_center, y_center)
@@ -399,12 +398,13 @@ def run(
                 LOGGER.info(
                     f"{s}Done. YOLO:({t3 - t2:.3f}s), StrongSORT:({t5 - t4:.3f}s)"
                 )
+                annotator.draw_info(len(outputs[i]), fps=1 / ((t3 - t2) + (t5 - t4)))
 
             else:
                 strongsort_list[i].increment_ages()
                 LOGGER.info("No detections")
+                # annotator.draw_info(0, fps=1 / ((t3 - t2) + (t5 - t4)))
 
-            annotator.draw_info(len(outputs[i]), fps=1 / ((t3 - t2) + (t5 - t4)))
             # Stream results
             im0 = annotator.result()
 
