@@ -248,7 +248,6 @@ def run(
             imc = im0.copy() if save_crop else im0  # for save_crop
 
             annotator = Annotator(im0, line_width=2, pil=not ascii)
-            annotator.draw_polylines(speed_estimator.poly_area)
             if cfg.STRONGSORT.ECC:  # camera motion compensation
                 strongsort_list[i].tracker.camera_update(prev_frames[i], curr_frames[i])
 
@@ -398,7 +397,6 @@ def run(
                 LOGGER.info(
                     f"{s}Done. YOLO:({t3 - t2:.3f}s), StrongSORT:({t5 - t4:.3f}s)"
                 )
-                annotator.draw_info(len(outputs[i]), fps=1 / ((t3 - t2) + (t5 - t4)))
 
             else:
                 strongsort_list[i].increment_ages()

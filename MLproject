@@ -1,0 +1,14 @@
+name: car-tracking
+
+docker_env:
+  image: car-tracking
+
+entry_points:
+  main:
+    command: "python track.py --source ./data/near-real/real720p-cut.mp4 \
+            --yolo-weights ./weights/yolov5s.pt --imgsz 512 \
+            --strong-sort-weights osnet_x1_0_msmt17.pt \
+            --save-vid \
+            --poly-file ./data/near-real/real720p-cut.txt \
+            --save-json --distance 32 \
+            --classes 0 3"
